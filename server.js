@@ -3,6 +3,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 const mineflayer = require('mineflayer');
+const mcProtocol = require('minecraft-protocol');
 const crypto = require('crypto');
 
 const app = express();
@@ -121,10 +122,57 @@ function setupBotListeners(botId, bot) {
   bot.on('playerJoined', () => updateTabList(botId, bot));
   bot.on('playerLeft', () => updateTabList(botId, bot));
 
+  bot.once('login', () => {
+    try {
+      if (bot._client) {
+        // MCC Protocol18: Send vanilla client settings
+        bot._client.write('settings', {
+          locale: 'en_US',
+          viewDistance: 10,
+          chatFlags: 0,
+          chatColors: true,
+          skinParts: 127
+        });
+
+        // MCC Protocol18: Send vanilla client brand
+        bot._client.write('custom_payload', {
+          channel: 'MC|Brand',
+          data: Buffer.from('\x07vanilla')
+        });
+
+        // MCC Protocol18: Auto-respond to server/proxy transaction confirmation packets (anti-cheat verification)
+        bot._client.on('transaction', (packet) => {
+          try {
+            bot._client.write('transaction', {
+              windowId: packet.windowId,
+              action: packet.action,
+              accepted: true
+            });
+          } catch (e) {}
+        });
+      }
+    } catch (e) {}
+  });
+
   bot.on('kicked', (reason) => {
     let reasonText = typeof reason === 'object' ? JSON.stringify(reason) : String(reason);
-    sendLog(botId, 'error', `[${session.config.username}] Kicked from server: ${reasonText}`);
+    sendLog(botId, 'error', `[${session.config.username}] Kicked: ${reasonText}`);
     cleanupBot(botId);
+
+    // MCC Auto-reconnect: if proxy issues anti-bot verification challenge ("try again in a few seconds")
+    const lower = reasonText.toLowerCase();
+    if (lower.includes('try again in a few seconds') || lower.includes('failed to connect to the server')) {
+      if (!session._challengeRetrying) {
+        session._challengeRetrying = true;
+        sendLog(botId, 'system', `Proxy verification challenge detected. Automatically reconnecting in 3.5 seconds to pass anti-bot check...`);
+        setTimeout(() => {
+          session._challengeRetrying = false;
+          if (!session.status.connected) {
+            startBotSession(session.config, botId);
+          }
+        }, 3500);
+      }
+    }
   });
 
   bot.on('error', (err) => {
@@ -166,6 +214,88 @@ io.use((socket, next) => {
   next();
 });
 
+function startBotSession(config, targetId = null) {
+  const host = config.host ? config.host.trim() : 'localhost';
+  const port = parseInt(config.port) || 25565;
+  const username = config.username ? config.username.trim() : `Cracked_${Math.floor(1000 + Math.random() * 9000)}`;
+  const auth = config.auth === 'microsoft' ? 'microsoft' : 'offline';
+  const version = config.version && config.version.trim() !== '' ? config.version.trim() : '1.8.9';
+  const botId = targetId || config.id || crypto.randomUUID();
+
+  let session = botSessions.get(botId);
+  if (session && session.bot && session.status.connected) {
+    return;
+  }
+
+  const sessionData = {
+    id: botId,
+    config: { host, port, username, auth, version },
+    bot: null,
+    status: {
+      connected: false,
+      connecting: true,
+      spawned: false,
+      server: `${host}:${port}`,
+      username: username,
+      auth: auth,
+      version: version,
+      health: 20,
+      food: 20,
+      position: { x: 0, y: 0, z: 0 },
+      players: []
+    },
+    logs: session ? session.logs : []
+  };
+
+  botSessions.set(botId, sessionData);
+  io.emit('session-created', {
+    id: botId,
+    config: sessionData.config,
+    status: sessionData.status
+  });
+
+  sendLog(botId, 'system', `Connecting to ${host}:${port} as "${username}" (Minecraft ${version}, Auth: ${auth})...`);
+
+  const botOptions = {
+    host,
+    port,
+    username,
+    auth,
+    version: (version && version !== 'auto') ? version : false,
+    hideErrors: false,
+    checkTimeoutInterval: 60 * 1000,
+    brand: 'vanilla'
+  };
+
+  if (auth === 'microsoft') {
+    botOptions.onMsaCode = (data) => {
+      io.emit('msa-code', {
+        botId,
+        user_code: data.user_code,
+        verification_uri: data.verification_uri,
+        message: data.message
+      });
+      sendLog(botId, 'system', `[AUTH] Microsoft Login: visit ${data.verification_uri} and enter: ${data.user_code}`);
+    };
+  }
+
+  function launchBot() {
+    try {
+      const bot = mineflayer.createBot(botOptions);
+      sessionData.bot = bot;
+      setupBotListeners(botId, bot);
+    } catch (err) {
+      sessionData.status.connecting = false;
+      io.emit('bot-status', { botId, status: sessionData.status });
+      sendLog(botId, 'error', `Failed to initialize bot: ${err.message}`);
+    }
+  }
+
+  mcProtocol.ping({ host, port }, () => {
+    launchBot();
+  });
+}
+
 io.on('connection', (socket) => {
   // Send list of all existing sessions to newly connected client
   const sessionsSummary = [];
@@ -181,83 +311,7 @@ io.on('connection', (socket) => {
 
   // Add / Connect Bot
   socket.on('start-bot', (config) => {
-    const host = config.host ? config.host.trim() : 'localhost';
-    const port = parseInt(config.port) || 25565;
-    const username = config.username ? config.username.trim() : `Cracked_${Math.floor(1000 + Math.random() * 9000)}`;
-    const auth = config.auth === 'microsoft' ? 'microsoft' : 'offline';
-    const version = config.version && config.version.trim() !== '' ? config.version.trim() : '1.8.9';
-    const botId = config.id || crypto.randomUUID();
-
-    let session = botSessions.get(botId);
-    if (session && session.bot && session.status.connected) {
-      socket.emit('console-log', {
-        botId,
-        type: 'error',
-        text: 'This bot instance is already connected.',
-        time: new Date().toLocaleTimeString()
-      });
-      return;
-    }
-
-    const sessionData = {
-      id: botId,
-      config: { host, port, username, auth, version },
-      bot: null,
-      status: {
-        connected: false,
-        connecting: true,
-        spawned: false,
-        server: `${host}:${port}`,
-        username: username,
-        auth: auth,
-        version: version,
-        health: 20,
-        food: 20,
-        position: { x: 0, y: 0, z: 0 },
-        players: []
-      },
-      logs: session ? session.logs : []
-    };
-
-    botSessions.set(botId, sessionData);
-    io.emit('session-created', {
-      id: botId,
-      config: sessionData.config,
-      status: sessionData.status
-    });
-
-    sendLog(botId, 'system', `Connecting to ${host}:${port} as "${username}" (Minecraft ${version}, Auth: ${auth})...`);
-
-    const botOptions = {
-      host,
-      port,
-      username,
-      auth, // 'offline' allows any cracked account username!
-      version,
-      hideErrors: false
-    };
-
-    if (auth === 'microsoft') {
-      botOptions.onMsaCode = (data) => {
-        io.emit('msa-code', {
-          botId,
-          user_code: data.user_code,
-          verification_uri: data.verification_uri,
-          message: data.message
-        });
-        sendLog(botId, 'system', `[AUTH] Microsoft Login: visit ${data.verification_uri} and enter: ${data.user_code}`);
-      };
-    }
-
-    try {
-      const bot = mineflayer.createBot(botOptions);
-      sessionData.bot = bot;
-      setupBotListeners(botId, bot);
-    } catch (err) {
-      sessionData.status.connecting = false;
-      io.emit('bot-status', { botId, status: sessionData.status });
-      sendLog(botId, 'error', `Failed to initialize bot: ${err.message}`);
-    }
+    startBotSession(config);
   });
 
   // Send message / command to a bot or all bots
