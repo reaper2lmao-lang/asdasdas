@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minecraft 1.8.9 Multi-Account Web Console</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Lock Screen Overlay -->
+  <div id="lockScreen" class="lock-screen-overlay">
+    <div class="lock-box">
+      <div class="lock-brand">
+        <span class="lock-cube">⛏️</span>
+        <h2>Minecraft Web Console</h2>
+        <p>Access is restricted. Enter password to continue.</p>
+      </div>
+      <form id="lockForm" class="lock-form">
+        <div class="lock-field">
+          <input type="password" id="sitePasswordInput" placeholder="Enter password..." autocomplete="current-password" required autofocus>
+          <button type="button" id="btnTogglePasswordView" class="btn-toggle-eye" title="Show/Hide Password">👁️</button>
+        </div>
+        <div id="lockErrorMsg" class="lock-error-msg hidden">Incorrect password. Please try again.</div>
+        <button type="submit" class="btn btn-emerald btn-block">
+          <span>Unlock Console</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-badge">
+          <span class="brand-cube">⛏️</span>
+          <span class="brand-title">MINECRAFT CONSOLE</span>
+          <span class="version-tag">1.8.9</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnOpenSettings" class="btn btn-outline" title="Backend Server Settings">
+          <span>⚙️ Backend</span>
+        </button>
+        <button id="btnLockApp" class="btn btn-outline" title="Lock Console">
+          <span>🔒 Lock</span>
+        </button>
+        <button id="btnOpenNewBotModal" class="btn btn-emerald">
+          <span class="btn-icon">+</span> Launch New Account
+        </button>
+      </div>
+    </header>
+
+    <!-- Bot Selector Tabs Bar -->
+    <div class="bot-tabs-bar">
+      <div id="botTabsList" class="bot-tabs">
+        <!-- Rendered dynamically: e.g. <div class="bot-tab active">...</div> -->
+      </div>
+      <div class="tabs-tools">
+        <label class="broadcast-toggle" title="When checked, commands and chat are broadcast to all connected accounts simultaneously">
+          <input type="checkbox" id="chkBroadcastAll">
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">Broadcast to All Bots</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <main class="workspace-grid">
+      <!-- Left: Active Console View -->
+      <section class="console-wrapper">
+        <!-- Active Session Info Bar -->
+        <div class="session-bar">
+          <div class="session-details">
+            <span class="status-indicator-dot disconnected" id="activeStatusDot"></span>
+            <div class="session-meta">
+              <span class="session-name" id="activeBotName">No Account Selected</span>
+              <span class="session-server" id="activeBotServer">-</span>
+            </div>
+          </div>
+          <div class="session-controls">
+            <button id="btnActiveDisconnect" class="btn btn-sm btn-outline-danger" disabled>Disconnect</button>
+            <button id="btnActiveReconnect" class="btn btn-sm btn-outline-primary" disabled>Reconnect</button>
+            <button id="btnActiveRemove" class="btn btn-sm btn-ghost" title="Close this tab">✕</button>
+          </div>
+        </div>
+
+        <!-- Microsoft Auth Device Code Banner -->
+        <div id="msaBanner" class="msa-banner hidden">
+          <div class="msa-content">
+            <span class="msa-icon">🔑</span>
+            <div class="msa-text">
+              <strong>Microsoft Authentication Required:</strong>
+              <span>Go to <a id="msaLink" href="#" target="_blank" rel="noopener">microsoft.com/link</a> and enter code:</span>
+            </div>
+            <span id="msaCode" class="msa-code-box">XXXX-XXXX</span>
+          </div>
+          <button id="btnCopyMsa" class="btn btn-sm btn-outline">Copy Code</button>
+        </div>
+
+        <!-- Console Log Box -->
+        <div class="console-box">
+          <div class="console-toolbar">
+            <div class="filter-group">
+              <button class="filter-pill active" data-filter="all">All</button>
+              <button class="filter-pill" data-filter="chat">Chat</button>
+              <button class="filter-pill" data-filter="system">System</button>
+              <button class="filter-pill" data-filter="sent">Sent</button>
+              <button class="filter-pill" data-filter="error">Errors</button>
+            </div>
+            <div class="console-actions">
+              <button id="btnToggleScroll" class="tool-btn active">Auto-Scroll: ON</button>
+              <button id="btnClearLog" class="tool-btn">Clear</button>
+            </div>
+          </div>
+
+          <!-- Terminal Content Area -->
+          <div id="terminalStream" class="terminal-stream">
+            <div class="empty-terminal-prompt">
+              <span>No active console session. Launch an account using the button above.</span>
+            </div>
+          </div>
+
+          <!-- Quick Action Commands / Macros -->
+          <div class="quick-macros">
+            <span class="macro-tag">Quick:</span>
+            <button class="macro-chip" data-cmd="/help">/help</button>
+            <button class="macro-chip" data-cmd="/spawn">/spawn</button>
+            <button class="macro-chip" data-cmd="/hub">/hub</button>
+            <button class="macro-chip" data-cmd="/lobby">/lobby</button>
+            <button class="macro-chip" data-cmd="/list">/list</button>
+            <button class="macro-chip" data-cmd="/ping">/ping</button>
+            <button class="macro-chip" data-cmd="hello everyone!">Say Hello</button>
+          </div>
+
+          <!-- Command Input Bar -->
+          <form id="chatForm" class="command-bar">
+            <span class="command-prefix">&gt;</span>
+            <input 
+              type="text" 
+              id="cmdInput" 
+              placeholder="Type chat or /command... (Enter to send, Up/Down for history)" 
+              autocomplete="off" 
+              disabled
+            />
+            <button type="submit" id="btnSendCmd" class="btn btn-send" disabled>
+              <span>Send</span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Right: Active Bot Telemetry & Players Sidebar -->
+      <aside class="telemetry-sidebar">
+        <!-- Status Widget -->
+        <div class="hud-card">
+          <div class="hud-header">
+            <h3>Player Telemetry</h3>
+            <span id="activeAuthBadge" class="auth-badge">CRACKED</span>
+          </div>
+
+          <div class="telemetry-stats">
+            <div class="stat-pill">
+              <span class="stat-label">Coordinates</span>
+              <span id="telePos" class="stat-value font-mono">X: 0 | Y: 0 | Z: 0</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-label">Version</span>
+              <span id="teleVersion" class="stat-value font-mono">1.8.9</span>
+            </div>
+          </div>
+
+          <!-- Health Gauge -->
+          <div class="gauge-block">
+            <div class="gauge-labels">
+              <span class="gauge-title">❤️ Health</span>
+              <span id="labelHealth" class="gauge-num">20 / 20</span>
+            </div>
+            <div class="gauge-track">
+              <div id="barHealth" class="gauge-bar health" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <!-- Food Gauge -->
+          <div class="gauge-block">
+            <div class="gauge-labels">
+              <span class="gauge-title">🍗 Food</span>
+              <span id="labelFood" class="gauge-num">20 / 20</span>
+            </div>
+            <div class="gauge-track">
+              <div id="barFood" class="gauge-bar food" style="width: 100%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab List Widget -->
+        <div class="hud-card tablist-hud">
+          <div class="hud-header">
+            <h3>Server Players</h3>
+            <span id="tabCount" class="counter-badge">0</span>
+          </div>
+          <div id="playersList" class="players-scrollable">
+            <div class="empty-players">Not connected to a server</div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Modal: Launch Account / New Bot -->
+    <div id="newBotModal" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span class="modal-icon">🎮</span>
+            <h2>Launch Minecraft Account</h2>
+          </div>
+          <button id="btnCloseModal" class="btn-close">✕</button>
+        </div>
+        <form id="newBotForm" class="modal-body">
+          <div class="form-row">
+            <div class="field-wrap">
+              <label for="inputUsername">Username (Cracked / Offline Name)</label>
+              <input type="text" id="inputUsername" placeholder="e.g. Steve, Miner99, Shadow" required>
+              <span class="field-hint">Any custom username works for cracked/offline servers!</span>
+            </div>
+          </div>
+
+          <div class="form-row grid-2">
+            <div class="field-wrap">
+              <label for="inputHost">Server IP / Host</label>
+              <input type="text" id="inputHost" placeholder="e.g. localhost or play.server.net" value="localhost" required>
+            </div>
+            <div class="field-wrap">
+              <label for="inputPort">Server Port</label>
+              <input type="number" id="inputPort" placeholder="25565" value="25565">
+            </div>
+          </div>
+
+          <div class="form-row grid-2">
+            <div class="field-wrap">
+              <label for="selectAuth">Account Mode</label>
+              <select id="selectAuth">
+                <option value="offline" selected>Cracked / Offline (No password)</option>
+                <option value="microsoft">Microsoft Account (Official)</option>
+              </select>
+            </div>
+            <div class="field-wrap">
+              <label for="selectVersion">Minecraft Version</label>
+              <select id="selectVersion">
+                <option value="1.8.9" selected>1.8.9 (Recommended)</option>
+                <option value="1.8">1.8</option>
+                <option value="1.12.2">1.12.2</option>
+                <option value="1.16.5">1.16.5</option>
+                <option value="1.20.1">1.20.1</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="btnCancelModal" class="btn btn-outline">Cancel</button>
+            <button type="submit" class="btn btn-emerald">Connect Account</button>
+          </div>
+        </form>
+      </div>
+    <!-- Modal: Backend Server Settings -->
+    <div id="settingsModal" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span class="modal-icon">⚙️</span>
+            <h2>Backend Server Connection</h2>
+          </div>
+          <button id="btnCloseSettings" class="btn-close">✕</button>
+        </div>
+        <form id="settingsForm" class="modal-body">
+          <div class="field-wrap">
+            <label for="inputBackendUrl">Node.js Backend URL</label>
+            <input type="text" id="inputBackendUrl" placeholder="e.g. http://localhost:3000 or https://your-server.com">
+            <span class="field-hint">
+              When hosting on Cloudflare Pages, enter the URL or IP of your Node.js backend running the Minecraft bots. Leave blank to use current origin.
+            </span>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="btnCancelSettings" class="btn btn-outline">Cancel</button>
+            <button type="submit" class="btn btn-emerald">Save &amp; Connect</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
